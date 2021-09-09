@@ -1227,4 +1227,159 @@ Secure, HttpOnly, SameSite
 * 결과적으로 네트워크 다운로드가 발생하지만 용량이 적은 헤더 정보만 다운로드
 * 매우 실용적인 해결책
 
+# 검증 헤더와 조건부 요청2
+##  검증 헤더
+* 캐시 데이터와 서버 데이터가 같은지 검증하는 데이터
+* Last-Modified , ETag
+##  조건부 요청 헤더
+* 검증 헤더로 조건에 따른 분기
+* If-Modified-Since: Last-Modified 사용
+* If-None-Match: ETag 사용
+* 조건이 만족하면 200 OK
+* 조건이 만족하지 않으면 304 Not Modified
 
+
+
+### If-Modified-Since: 이후에 데이터가 수정되었으면?
+* 데이터 미변경 예시(바로 윗 문단 그림, 정리 참조)
+  * 캐시: 2020년 11월 10일 10:00:00 vs 서버: 2020년 11월 10일 10:00:00
+  * 304 Not Modified, 헤더 데이터만 전송(BODY 미포함)
+  * 전송 용량 0.1M (헤더 0.1M, 바디 1.0M)
+* 데이터 변경 예시
+  * 캐시: 2020년 11월 10일 10:00:00 vs 서버: 2020년 11월 10일 11:00:00
+  * 200 OK, 모든 데이터 전송(BODY 포함)
+  * 전송 용량 1.1M (헤더 0.1M, 바디 1.0M)
+
+## Last-Modified, If-Modified-Since 헤더 검증의 `단점`
+
+* 1초 미만(0.x초) 단위로 캐시 조정이 불가능
+* 날짜 기반의 로직 사용
+* `데이터를 수정해서 날짜가 다르지만, 같은 데이터를 수정해서 데이터 결과가 똑같은 경우`
+* 서버에서 별도의 캐시 로직을 관리하고 싶은 경우
+  * 예) 스페이스나 주석처럼 크게 영향이 없는 변경에서 캐시를 유지하고 싶은 경우
+
+
+## 저 검증 헤더의 단점을 해결 한 방법 : ETag, If-None-Match 헤더
+
+* ETag(Entity Tag)
+* 캐시용 데이터에 임의의 고유한 버전 이름을 달아둠(해쉬 알고리즘, 라이브러리 사용)
+  * 예) ETag: "v1.0", ETag: "a2jiodwjekjl3"
+* 데이터가 변경되면 이 이름을 바꾸어서 변경함(Hash를 다시 생성)
+  * 예) ETag: "aaaaa" -> ETag: "bbbbb"
+* 진짜 단순하게 ETag만 보내서 같으면 유지, 다르면 다시 받기!
+
+* ![](img/d0220124.png)
+
+### 1. 첫번째 요청의 Etag에 고유 해쉬값을 보내줌
+### 2. 브라우저(클라이언트)는 브라우저  캐시에 Etag를 저장
+  * ![](img/7501108c.png)
+### 3. 캐시 시간 초과시 브라우저는 요청 헤더에 if-None-Match 헤더에 해쉬값을 넣어 전송
+  * ![](img/a9d78ae8.png)
+### 4. 데이터가 수정되지 않아서 해쉬값이 같으면 304 Not Modified 응답
+  * ![](img/dd5e2a43.png)
+
+### 5. 브라우저는 응답 결과 재사용, 헤더 데이터(캐시 유효시간, Etag) 갱신. 
+
+## ETag, If-None-Match 정리
+
+* 진짜 단순하게 ETag만 서버에 보내서 같으면 유지, 다르면 다시 받기!
+* `캐시 제어 로직을 서버에서 완전히 관리`
+* 클라이언트는 단순히 이 값을 서버에 제공(클라이언트는 캐시 메커니즘을 모름)
+* 예)
+  * 서버는 배타 오픈 기간인 3일 동안 파일이 변경되어도 ETag를 동일하게 유지
+  * 애플리케이션 배포 주기에 맞추어 ETag 모두 갱신
+
+# 캐시와 조건부 요청 헤더
+
+* 캐시 제어 헤더 종류
+  * 1.Cache-Control: 캐시 제어
+  * 2.Pragma: 캐시 제어(하위 호환)
+  * 3.Expires: 캐시 유효 기간(하위 호환)
+
+## 1. Cache-Control
+캐시 지시어(directives)
+* Cache-Control: max-age
+  * 캐시 유효 시간, 초 단위
+
+* Cache-Control: no-cache
+  * 데이터는 캐시해도 되지만, 항상 원(origin) 서버에 검증하고 사용
+
+* Cache-Control: no-store
+  * 데이터에 민감한 정보가 있으므로 저장하면 안됨(메모리에서 사용하고 최대한 빨리 삭제)
+
+## 2. Pragma
+캐시 제어(하위 호환)
+* Pragma: no-cache
+* HTTP 1.0 하위 호환
+
+## 3. Expires
+캐시 만료일 지정(하위 호환)
+* expires: Mon, 01 Jan 1990 00:00:00 GMT
+* 캐시 만료일을 정확한 날짜로 지정
+* HTTP 1.0 부터 사용
+* `지금은 더 유연한 Cache-Control: max-age 권장`
+* Cache-Control: max-age와 함께 사용하면 Expires는 무시
+
+## 검증 헤더와 조건부 요청 헤더
+* 검증 헤더 (Validator)
+  * ETag: "v1.0", ETag: "asid93jkrh2l"
+  * Last-Modified: Thu, 04 Jun 2020 07:19:24 GMT
+* 조건부 요청 헤더
+  * If-Match, If-None-Match: ETag 값 사용
+  * If-Modified-Since, If-Unmodified-Since: Last-Modified 값 사용
+
+# 프록시 캐시
+
+## 프록시 캐시 도입
+
+* ![](img/2ae476af.png)
+  * 원 서버를 직접 접근하면 거리가 멀기때문에 네트워크 통신 속도가 느리다.
+  * 프록시 캐시 서버를 사용하면 통신 속도를 올릴 수 있다.
+
+* ![](img/5edb765c.png)
+  * public 캐시 : 중간에서 공용으로 사용하는 캐시
+  * private 캐시 : 내 웹브라우저에서 사용하는 캐시
+    * ex) 로그인 정보 
+
+
+### Cache-Control
+캐시 지시어(directives) - 기타
+* Cache-Control: public
+  * 응답이 public 캐시에 저장되어도 됨
+* Cache-Control: private
+  * 응답이 해당 사용자만을 위한 것임, private 캐시에 저장해야 함(기본값)
+* Cache-Control: s-maxage
+  * 프록시 캐시에만 적용되는 max-age
+* Age: 60 (HTTP 헤더)
+  * 오리진 서버에서 응답 후 프록시 캐시 내에 머문 시간(초)
+
+# 캐시 무효화
+
+## Cache-Control
+### 확실한 캐시 무효화 응답
+* Cache-Control: no-cache, no-store, must-revalidate
+   
+* Pragma: no-cache
+* HTTP 1.0 하위 호환
+* `이 페이지는 캐시가 되면 안되면 이걸 다 넣어줗어야 한다. `
+
+캐시 지시어(directives) - 확실한 캐시 무효화
+* Cache-Control: no-cache
+  * 데이터는 캐시해도 되지만, 항상 원 서버에 검증하고 사용(이름에 주의!)
+* Cache-Control: no-store
+  * 데이터에 민감한 정보가 있으므로 저장하면 안됨(메모리에서 사용하고 최대한 빨리 삭제)
+* Cache-Control: must-revalidate
+  * 캐시 만료후 최초 조회시 원 서버에 검증해야함
+  * 원 서버 접근 실패시 반드시 오류가 발생해야함 - 504(Gateway Timeout)
+  * must-revalidate는 캐시 유효 시간이라면 캐시를 사용함
+* Pragma: no-cache
+ * HTTP 1.0 하위 호환을 위해 넣어주면 좋다. 
+
+
+# no-cache VS must-revalidate
+
+* ![](img/bdb2a4ab.png)
+
+* ![](img/812a079a.png)
+
+* ![](img/881e2baa.png)
